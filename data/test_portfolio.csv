@@ -1,0 +1,5 @@
+Ticker,Quantity,PurchasePrice,AssetClass
+NVDA,5,175,Equity
+AMZN,8,210,Equity
+META,12,740,Equity
+QQQ,4,610,ETF

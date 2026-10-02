@@ -1,0 +1,100 @@
+---
+title: "Portfolio Risk & Stress Testing Engine"
+subtitle: "Management risk report"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width = 9, fig.height = 4)
+s <- snapshot
+tab <- function(x, digits = 4) knitr::kable(x, digits = digits)
+```
+
+## Executive summary
+
+Generated: `r format(s$generated, tz = "UTC", usetz = TRUE)`.  
+Source: **`r if (s$source == "demo") "SYNTHETIC DEMONSTRATION - not market data" else "Yahoo Finance"`**.  
+Requested history: `r paste(s$requested_dates, collapse = " to ")`.  
+Downloaded/generated: `r format(s$fetched, tz = "UTC", usetz = TRUE)`.  
+Aligned return sample: `r paste(range(s$returns$Date), collapse = " to ")` (`r nrow(s$returns)` observations).  
+Portfolio value: **`r money(s$value)`**; holdings: **`r nrow(s$holdings)`**.  
+One-day confidence: **`r pct(s$confidence)`**. All currency amounts assume USD.
+
+Prices are latest closes within the selected range, not live quotes. The table includes price dates and fallback provenance. Purchase prices remain cost basis. Historical weights are held fixed at valuation-date weights and rebalanced daily.
+
+## Holdings and allocation
+
+```{r}
+tab(s$holdings)
+ggplot2::ggplot(s$holdings, ggplot2::aes(reorder(Ticker, Weight), Weight)) +
+  ggplot2::geom_col(fill = "black") + ggplot2::coord_flip() +
+  ggplot2::labs(x = NULL, y = "Weight") + risk_theme()
+```
+
+## Return and risk metrics
+
+Annualized return uses exp(252 × mean(log(1 + R))) − 1. Annualized volatility uses daily sample standard deviation × sqrt(252).
+
+```{r}
+tab(data.frame(Metric = names(s$metrics), Value = unname(s$metrics)))
+print(line_chart(s$returns$Date, s$returns$Return, "Fixed-weight daily returns"))
+tab(s$risk)
+print(loss_chart(s$returns$Return, s$confidence))
+```
+
+VaR is a loss threshold expected to be exceeded on approximately `r pct(1 - s$confidence)` of trading days under the model. It is not a maximum loss. ES measures severity in the tail: the empirical average loss at or beyond VaR, with ties included. The empirical quantile uses R type 7 interpolation; this conditional tail mean is not fractional-tail-mass ES for discrete distributions. Negative values are retained and indicate gain thresholds.
+
+Normal parametric VaR = −(mean + lower-tail z-score × standard deviation). Normal ES uses the analytic normal tail mean. Monte Carlo uses **`r s$draws`** correlated normal draws with seed **`r s$seed`**, estimated asset means and sample covariance. Normal models can underestimate fat tails and permit returns below −100%.
+
+## Stress resilience
+
+All scenarios are hypothetical. GFC/COVID/EM scenarios are historical-style hypothetical shocks, not exact historical replications. Rate and FX labels represent assumed Equity/ETF repricing; no bond duration or FX exposure model is implemented. The high-volatility scenario is also a static price shock.
+
+```{r}
+tab(s$scenarios)
+```
+
+Selected scenario: **`r s$selected_scenario`**. Before: `r money(s$stress$before)`; after: `r money(s$stress$after)`; loss/(gain): `r money(s$stress$loss)` (`r pct(s$stress$loss_pct)`).
+
+```{r}
+tab(s$stress$holdings[, c("Ticker", "AssetClass", "Shock", "StressPnL")])
+tab(s$stress$by_class)
+ggplot2::ggplot(s$scenarios, ggplot2::aes(reorder(Scenario, Loss), Loss)) +
+  ggplot2::geom_col(fill = "red") + ggplot2::coord_flip() +
+  ggplot2::labs(x = NULL, y = "Hypothetical stress loss (USD)") + risk_theme()
+```
+
+## Diversification and risk contributors
+
+```{r}
+tab(s$correlation$contributions[order(-s$correlation$contributions$DailyVolContribution), ])
+tab(s$correlation$correlation)
+tab(s$correlation$covariance, digits = 8)
+```
+
+Matrix daily volatility: `r pct(s$correlation$matrix_volatility)`; direct daily volatility: `r pct(s$correlation$direct_volatility)`. Euler volatility contributions sum to portfolio daily volatility; they are not component VaR. Correlation can increase under stress. Constant-return assets have undefined correlations.
+
+## Rolling VaR coverage
+
+Window: `r s$window` observations. Each prediction excludes the realized observation being tested. Fixed current weights make this a portfolio diagnostic rather than an investable strategy backtest.
+
+```{r backtest, results='asis'}
+if (!is.null(s$backtest$error)) {
+  cat("Backtest unavailable:", s$backtest$error)
+} else {
+  print(tab(s$backtest$summary))
+  d <- s$backtest$detail
+  print(ggplot2::ggplot(d, ggplot2::aes(Date)) +
+    ggplot2::geom_line(ggplot2::aes(y = Loss), colour = "grey60") +
+    ggplot2::geom_line(ggplot2::aes(y = VaR), colour = "black") +
+    ggplot2::geom_point(data = d[d$Exception, ], ggplot2::aes(y = Loss), colour = "red") +
+    ggplot2::labs(y = "Loss / VaR", title = "Out-of-window exceptions") + risk_theme())
+}
+```
+
+Kupiec tests the null that the exception probability is 1 − confidence. The likelihood ratio compares the null with the observed exception rate. Small p-values suggest incorrect coverage; this test does not establish independence or validate the entire model. Small samples weaken the asymptotic approximation.
+
+## Scope and limitations
+
+Long-only equities and ETFs, a single assumed USD currency, no leverage, transaction costs, taxes, liquidity risk or derivatives. Returns use Yahoo's vendor-adjusted close, whose adjustment quality is not independently verified. Valuation uses unadjusted close. Incomplete tickers block portfolio risk; no holdings are silently dropped. Common return intervals are used without forward filling. Non-synchronous calendars, stale prices, short samples and changing correlations can limit inference. A 99% tail has very few observations in short samples. The tool is an educational analytical workbench, not a regulated production risk service.
+
+

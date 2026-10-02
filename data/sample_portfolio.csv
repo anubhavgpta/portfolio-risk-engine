@@ -1,0 +1,5 @@
+Ticker,Quantity,PurchasePrice,AssetClass
+AAPL,20,180,Equity
+MSFT,15,410,Equity
+GOOGL,10,170,Equity
+SPY,10,550,ETF
